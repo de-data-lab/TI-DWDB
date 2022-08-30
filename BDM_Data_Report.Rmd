@@ -1,0 +1,1850 @@
+---
+title: "Zogby Questions - BDM"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE) 
+```
+
+
+```{r read data, message=FALSE}
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  # add required libraries here
+  plotly,
+  ggplot2,
+  readxl,
+  tidyverse,
+  cluster,
+  factoextra,
+  tibble,
+  scales,
+  purrr)
+
+
+# get the all necessary files
+variable_value <- read_excel("value2.xlsx")
+variable_info <- read_excel("Delaware BDM Final 2022 MAP variable info.xlsx")
+
+labels <- "industries_organized.csv" %>%
+  read_csv() %>%
+  select(index:naics) %>%
+  dplyr::rename(Industry=index) %>%
+  mutate(Industry=as.factor(Industry))
+
+BDM_Final_Data <- read_excel("Delaware BDM Final 2022 DATA ADDED ZIPS.xlsx")
+#BDM_Final_Data_Words<- read_excel("Delaware BDM Final 2022 DATA WORDS ADDED ZIPS.xlsx")
+
+```
+
+
+```{r clean data}
+#clean "Yes"=1, "No"=0 entries. 
+variable_value[variable_value == "0(1)"] <- "0"
+
+#convert float to integer
+variable_value$Sample_Number <- as.integer(variable_value$Sample_Number)
+
+industries <- variable_value$Label[40:59]
+
+# Create a copy of the dataset
+BDM_Final_Copy <- BDM_Final_Data
+
+#convert to numeric values
+BDM_Final_Copy[] <- lapply(BDM_Final_Copy, function(x) {
+    if(is.factor(x)) as.numeric(as.character(x)) else x
+})
+# sapply(BDM_Final_Copy, class)
+
+#keep sample number seperate
+#SAM_NO = BDM_Final_Copy["SAM_NO"]
+BDM_Final_Clean <- BDM_Final_Copy
+
+lbl <- c("Agriculture","Mining","Construction","Manufacturing","Wholesale","Retail","Transportation",
+         "Utilities", "Information","Finance","Real Estate","Professional","Management","Administrative",
+         "Educational", "Health Care","Arts","Accommodation","Other Services","Unsure") 
+
+growth_industries <- data.frame("Industry"= c(1,3,4,10,12,15,16),
+                                "names" = c("Food and Agriculture",
+                                            "Construction and Mechanical Trades ",
+                                            "Manufacturing, Logistics and Transportation",
+                                            "Financial and Business Services",
+                                            "Science and Technology",
+                                            "Education",
+                                            "Health Care"
+                                )
+)
+```
+
+
+
+## Number of Employees Within the Company {.tabset}
+
+
+### Company size distributions
+```{r S3 bar graph,fig.width=8}
+set.seed(123)
+S3_plot_data <- dplyr::count(BDM_Final_Clean,S3) %>% 
+  dplyr::rename(Count=n) %>% 
+  mutate(Percentage=percent(round(Count/sum(Count),3))) %>% 
+  mutate(labels = paste0(Percentage," (",Count,")")) %>% 
+  mutate(prop = Count/sum(Count)) %>% 
+  mutate(ypos = 360*(cumsum(prop)-0.5*prop)) %>% 
+  mutate(yang = 90 + ypos)
+
+S3_data <- data_frame(S3 = 1:10, 
+                      Variable = c("1/Sole proprietorship","2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+","Refuse"))
+
+S3_data$Variable <- factor(S3_data$Variable,
+                                levels=c("2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+"))
+
+
+S3_plot_data <- dplyr::inner_join(S3_data,S3_plot_data, by="S3")
+
+ggplotly(
+  S3_plot_data %>% 
+ggplot(aes(x= Variable,
+          y=Count,
+        text=paste(
+         "<br><b>&#8226; Count: </b>",Count,
+         "<br><b> &#8226; Percent: </b>",Percentage
+       ), group=1)) +
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  geom_bar( stat = "identity", position = "stack",color="#d95f0e",fill="#fec44f") +
+  ggtitle("What is the Number of Employees in Your Company?") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  xlab("Number of Employees Within the Company") +
+  ylab("Response of the Business (Count)") +
+  scale_fill_brewer(palette="Set1") +
+  theme_classic(),tooltip = c("text")
+)
+
+
+```
+
+ + 75% of the included business staff 100 or less persons in Delaware.
+
+
+
+```{r S3 pie chart, include=FALSE}
+### Pie chart of company size 
+# S3_plot_data$Variable <- factor(S3_plot_data$Variable, levels = rev(as.character(S3_plot_data$Variable)))
+S3_plot_data$Variable <- factor(S3_plot_data$Variable,
+                                levels=c("2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+"))
+ggplot(S3_plot_data,aes(x= "",y=Count, fill=Variable)) +
+  geom_bar(width = 1, stat = "identity", color="white", alpha=0.9) +
+  coord_polar("y",start = 0) +
+  ggtitle("What is the Number of Employees in Your Company?") +
+  #geom_text(aes(label=labels, angle=c(0,0,0,65,80,0,45,0)),position=position_stack(vjust=0.5), size=3, color="black") +
+  geom_text(aes(label=labels, angle=c(0,0,0,305,325,0,30,0)),position=position_stack(vjust=0.5), size=3, color="black") +
+  #geom_text(aes(label=labels, angle=yang),position=position_stack(vjust=0.5), size=3, color="black") +
+  theme_void() +
+  scale_fill_brewer(palette="Set1") + 
+  guides(fill = guide_legend(title = "Company Size"))
+
+```
+
+
+
+### Company size distributions across industries
+
+
+```{r D4A Industries with S3, fig.width=10, fig.height=7}
+S3_data <- data_frame(S3 = 1:10, 
+                      Variable = c("1/Sole proprietorship","2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+","Refuse"))
+  
+D4A_plot_data <- BDM_Final_Clean %>% 
+  dplyr::count(D4A,S3,name="Count") %>% 
+  dplyr::inner_join(S3_data,D4A_plot_data, by="S3") %>% 
+  dplyr::rename(Industry=D4A) %>% 
+  dplyr::mutate(Industry = as.factor(Industry)) %>% 
+  dplyr::inner_join(labels,D4A_plot_data, by="Industry") %>% 
+  dplyr::rename(Size=Variable) %>% 
+  group_by(Size) %>% 
+  dplyr::mutate(Percent =round(Count/sum(Count),3)) %>% 
+  ungroup() %>% 
+  rename(industry=Industry, Industry=names)
+# %>% 
+#    head() %>%
+#    dput()
+  
+D4A_plot_data1 <- D4A_plot_data %>% 
+    mutate(under_100 = Size %in% c("2-10", "11-25", "26-50", "51-75", "76-100")) %>% 
+    count(Industry, under_100, name = "company_count") %>% 
+    group_by(Industry) %>% 
+    mutate(percent = company_count / sum(company_count)) %>% 
+    ungroup() %>% 
+    pivot_wider(names_from = under_100,
+                values_from = percent,
+                values_fill = 0) %>% 
+    mutate(Industry = fct_reorder(Industry, `TRUE`)) %>% 
+    pivot_longer(cols = c(`FALSE`, `TRUE`),
+                 names_to = "under_100",
+                 values_to = "percent")
+      
+# D4A_plot_data1 <- D4A_plot_data %>% 
+#   mutate(under_100 = Size %in% c("2-10", "11-25", "26-50", "51-75", "76-100")) %>% 
+#   #count(Industry, under_100, name = "company_count") %>% 
+#   group_by(Industry) %>% 
+#   mutate(company_count = )
+#   mutate(percent = company_count / sum(company_count)) %>% 
+#   ungroup() %>% 
+#   mutate(percent_under_100 = if_else(under_100, percent, NA_real_)) %>%
+#   fill(percent_under_100) %>%
+#   mutate(Industry = fct_reorder(Industry, percent_under_100))
+
+D4A_plot_data$Size <- factor(D4A_plot_data$Size,
+                             levels=c("2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+"))
+
+```
+
+
+```{r D4A ggplotly graph, include=FALSE}
+ggplotly(
+  D4A_plot_data %>%
+    ggplot(aes(x = percent,
+               y = Industry,
+               fill = under_100,
+               text = paste(
+                 "<b>&#8226; Industry: </b>",Industry,
+                 "<br><b>&#8226; Count: </b>",Count,
+                 "<br><b>&#8226; Within Company Size Percentage: </b>",percent_less_100
+               ))) +
+    geom_bar(stat = "identity") +
+    geom_col() +
+    ggtitle("Company Size Across Primary Industries") +
+    ylab("Industries") +
+    xlab("Response of the Business ") +
+    theme(plot.title = element_text(size = 11, face = "bold")) +
+    theme(axis.title.y = element_text(size = 11)) +
+    theme(axis.text.x = element_text(size = 8)) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    #geom_text(aes(label=Count), position = position_stack(vjust = 0.5),size=2) +
+    guides(fill=guide_legend(title="Industries")) +
+    #scale_fill_brewer(palette="Spectral") +
+    theme_classic(),tooltip = c("text")
+)
+
+```
+
+
+```{r D4A plot using plotly-a,fig.width=10, fig.height=7}
+library(plotly)
+fig <- plot_ly(
+  data = D4A_plot_data,
+  x = ~Count,
+  y = ~Industry,
+  color = ~Size,
+  type = "bar",
+  orientation = 'h',
+  text = ~Industry,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within company size:</b>',Percent)
+)
+fig <- fig %>% 
+  layout(barmode = "stack",
+         title = list(text = '<b> Company Size Across Primary Industries </b>'),
+         xaxis = list(title = list(text='<b> Number of Employees Within the Company</b>')),
+         yaxis = list(title = list(text='<b> Response of the Business (Count) </b>')),
+         legend = list(title = list(text = '<b> Primary Industries </b>'))
+  )
+fig
+```
+
+
+
+```{r D4A plot using plotly-b,fig.width=10, fig.height=7, include=FALSE}
+plot_ly(
+  data = D4A_plot_data,
+  x = ~Industry,
+  y = ~Count,
+  color = ~Size,
+  type = "bar",
+  text = ~Industry,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within company size:</b>',Percent_size
+  )
+) %>% 
+  layout(barmode = "stack", legend = list("2-10","11-25","26-50","51-75","76-100","101-499","500-1000","1000+"))
+```
+
+
+
+
+```{r Q3 plot over time fro each industry-b, fig.width=10}
+library(dplyr)
+library(ggplot2)
+
+Q3_line_data <- aggregate(Q3A~D4A, BDM_Final_Clean,mean)
+Q3_line_data <- cbind(Q3_line_data,aggregate(Q3B~D4A, BDM_Final_Clean,mean)[2])
+Q3_line_data <- cbind(Q3_line_data,aggregate(Q3C~D4A, BDM_Final_Clean,mean)[2])
+
+Q3_line_data <- Q3_line_data %>% 
+  mutate(Industry = as.factor(D4A)) %>% 
+  dplyr::rename(`Current` = Q3A, `6 Months` = Q3B, `12 Months` = Q3C) %>% 
+  pivot_longer(Current:`12 Months`, names_to = "time") %>% 
+  mutate(time=as.factor(time)) %>% 
+  mutate(time = fct_relevel(time, c("Current","6 Months","12 Months")))
+
+merged <- inner_join(labels,Q3_line_data, by="Industry") %>% 
+  dplyr::rename(industry=Industry, Industry=names) %>% 
+  
+  
+  mutate(absolute_change = Size %in% c("2-10", "11-25", "26-50", "51-75", "76-100")) %>% 
+  group_by(Industry) %>% 
+  mutate(company_count = )
+  mutate(percent = company_count / sum(company_count)) %>% 
+  ungroup() %>% 
+  mutate(percent_under_100 = if_else(under_100, percent, NA_real_)) %>%
+  fill(percent_under_100) %>%
+  mutate(Industry = fct_reorder(Industry, percent_under_100))
+  
+  
+
+ggplotly( 
+  merged %>% 
+  ggplot(aes(x=time, y=value, color=Industry, group=Industry)) + 
+  geom_point() +
+  geom_line() +
+  ggtitle("Percentage of Staff Working Remotely Over Time Across Industries") +
+  xlab("Time Frame (months)") +
+  ylab("Percent of Staff") +
+  theme_bw() #) %>% 
+  #layout(legend = list(orientation = "h")
+  )
+
+```
+
+
+### 
+```{r Q12 look at distribution across industry}
+#How often do you assess your job descriptions and minimum hiring requirements (i.e. requiring a high school diploma or a college degree)?
+
+library(dplyr)
+data <- BDM_Final_Clean %>% select("D4A","Q12") %>% rename(Industry=D4A)
+
+
+##############################################################################
+# Q12 all industries
+Q12_count_all_ind <- data %>% count(Industry,Q12, name = "Count")
+
+# make it wide format
+Q12_count_all_ind <- Q12_count_all_ind %>% 
+  tidyr::spread(Q12,Count) %>%
+  rename(`As the need arises`="1", `Every 1-2 months`="2", 
+         `Every 3-6 months`="3", `Every 7-11 months`="4", 
+         `Annually`="5",`Every 1-3 years`="6",`Every 4 years or longer`="7") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(Industry = as.factor(Industry))
+#Q12_count_all_ind <- inner_join(labels,Q12_count_all_ind, by="Industry") 
+
+##############################################################################
+# Q12 sum
+Q12_sum <-  Q12_count_all_ind %>%
+  select(`As the need arises`:`Every 4 years or longer`) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+Q12_sum <- tibble::rownames_to_column(Q12_sum,"Variable")
+
+
+##############################################################################
+# Q12 Growth industries
+# extract the growth industries
+Q12_count_growth_ind  <- Q12_count_all_ind[Q12_count_all_ind$Industry %in%  
+                                     c("1","3","4","7","9","10","12","13","15","16","18"),] 
+Q12_count_growth_ind <- Q12_count_growth_ind %>% select(-Industry) # remove the first column
+# group the growth industries
+Q12_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q12_count_growth_ind)
+
+# sum those industries in the same growth industry
+Q12_count_growth_ind <- aggregate(. ~ Industry, Q12_count_growth_ind, sum)
+Q12_count_growth_ind <- inner_join(growth_industries, Q12_count_growth_ind, by = "Industry")
+
+# wide format to long format
+Q12_count_growth_ind <- Q12_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(`As the need arises`:`Every 4 years or longer`, names_to = "Answer") %>% 
+  mutate(Answer=as.factor(Answer)) %>% 
+  rename(`Growth Industry`=names, Count=value)
+
+# get the percentage data within answer and industry as well as total answer within industry
+Q12_count_growth_ind <- Q12_count_growth_ind %>% 
+  group_by(`Growth Industry`) %>% 
+  mutate(Percent=round(Count/sum(Count),3), G_Total=sum(Count)) %>% 
+  ungroup() %>% 
+  group_by(Answer) %>% 
+  mutate(Ans=round(Count/sum(Count),3)) %>% 
+  ungroup()
+
+Q12_count_growth_ind$Answer <- factor(Q12_count_growth_ind$Answer,
+                             levels=c("As the need arises", "Every 1-2 months",
+                                      "Every 3-6 months", "Every 7-11 months",
+                                      "Annually", "Every 1-3 years", "Every 4 years or longer"))
+
+plot_ly(
+  data = Q12_count_growth_ind,
+  x = ~Answer,
+  y = ~Count,
+  color = ~`Growth Industry`,
+  type = "bar",
+  text = ~`Growth Industry`,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within company:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+
+```
+
+```{r Q13-top-bottom data prepare}
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q13_1 = length(D4A[Q13_1 == 1]), Q13_2 = length(D4A[Q13_2 == 1]), 
+        Q13_3 = length(D4A[Q13_3 == 1]), Q13_4 = length(D4A[Q13_4 == 1]), 
+        Q13_5 = length(D4A[Q13_5 == 1]), Q13_6 = length(D4A[Q13_6 == 1]), 
+        Q13_7 = length(D4A[Q13_7 == 1]), Q13_8 = length(D4A[Q13_8 == 1]), 
+        Q13_9 = length(D4A[Q13_9 == 1]), Q13_10 = length(D4A[Q13_10 == 1]), 
+        Q13_11 = length(D4A[Q13_11 == 1]), Q13_12 = length(D4A[Q13_12 == 1]), 
+        Q13_13 = length(D4A[Q13_13 == 1]), Q13_14 = length(D4A[Q13_14 == 1]), 
+        Q13_15 = length(D4A[Q13_15 == 1]), Q13_16 = length(D4A[Q13_16 == 1]), 
+        Q13_17 = length(D4A[Q13_17 == 1]))
+detach("package:plyr", unload = TRUE)
+
+library(dplyr)
+Q13_count <- df %>%
+  dplyr::rename(Industry=D4A) %>% 
+  dplyr::mutate(Industry=as.factor(Industry)) %>% 
+  inner_join(labels,Q13_count, by="Industry")
+
+Q13_sum <-  Q13_count %>%
+  dplyr::select(Q13_1:Q13_17) %>% 
+  dplyr::summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  dplyr::rename(count = V1) %>% 
+  dplyr::arrange(desc(count)) %>% 
+  dplyr::mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  dplyr::slice(c(1:5,13:17))%>% 
+  dplyr::mutate(labels = paste0(Percentage," (",count,")")) %>% 
+  dplyr::mutate(Tools = c(rep("Top 5",5),rep("Bottom 5",5)))
+
+Q13_sum_top <- Q13_sum %>% 
+  slice(1:5)
+
+Q13_sum_bottom <- Q13_sum %>% 
+  slice(6:10)
+
+Q13_sum <- tibble::rownames_to_column(Q13_sum,"Variable")
+Q13_sum <- inner_join(variable_info,Q13_sum, by="Variable")
+Q13_sum_top <- tibble::rownames_to_column(Q13_sum_top,"Variable")
+Q13_sum_top <- inner_join(variable_info,Q13_sum_top, by="Variable")
+Q13_sum_bottom <- tibble::rownames_to_column(Q13_sum_bottom,"Variable")
+Q13_sum_bottom <- inner_join(variable_info,Q13_sum_bottom, by="Variable")
+```
+
+
+
+
+
+## What tools do employers use when recruiting? {.tabset}
+
+### Frequency of use 
+```{r Q13, fig.width=10}
+Q13_sum[9,2] = "Word of mouth"
+Q13_sum$Tools <- factor(Q13_sum$Tools,levels = c("Top 5", "Bottom 5"))
+
+ggplotly(
+  Q13_sum %>% 
+ggplot(aes(x= reorder(Question,-count),
+           y=count,
+           text=paste(
+             "<br><b> &#8226; Tool: </b>",Question,
+             "<br><b> &#8226; Count: </b>",count,
+             "<br><b> &#8226; Percentage among all tools: </b>",Percentage), 
+           group=1, fill=Tools)) +
+  geom_bar( stat = "identity") +
+  labs(fill = "") +
+  ggtitle("What Tools Do Employers Use? ") +
+  xlab("Recruiting Tools") +
+  ylab("Response of the Business (Count)") +
+  theme(axis.text.x = element_text(size = 8)) +
+  #guides(fill=guide_legend(title="Tools")) +
+  theme_classic(),tooltip = c("text")
+  #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+)
+```
+
+
+```{r Q13-top-pie, fig.height=5, fig.width=8, include=FALSE}
+ggplot(Q13_sum_top,aes(x= "",y=count, fill=reorder(Question,-count))) +
+  geom_bar(width = 1, stat = "identity", color="white", alpha=0.8) +
+  coord_polar("y",start = 0) +
+  ggtitle("Top-5: What Tools Do Employers Use?") +
+  geom_text(aes(label = labels),position = position_stack(vjust = 0.5), size=3, color = "black") +
+  guides(fill=guide_legend(title="Tools")) +
+  theme_void() 
+```
+
+```{r Q13-bottom-pie, fig.width=5, fig.height=9, include=FALSE}
+ggplot(Q13_sum_bottom,aes(x= "",y=count, fill=reorder(Question,-count))) +
+  geom_bar(width = 1, stat = "identity", color="white", alpha=0.8) +
+  coord_polar("y",start = 0) +
+  ggtitle("Bottom-5: What Tools Do Employers Use?")+
+  geom_text(aes(label = labels),position = position_stack(vjust = 0.5), size=3, color = "black") +
+  guides(fill=guide_legend(title="Tools")) +
+  theme_void() 
+  #scale_fill_brewer(palette="Set3")
+```
+
+
+### Recruitment tool success rate  
+
+* It looks like the businesses using the highest vote for those tools they are actively using. 
+  + `Social Media` has more approval ratings than `Facebook` (even though it is used more actively).   
+```{r Q14-top-bottom data prepare}
+library(plyr)
+df1 <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q14A = length(D4A[Q14A == 1]), Q14B = length(D4A[Q14B == 1]), 
+        Q14C = length(D4A[Q14C == 1]), Q14D = length(D4A[Q14D == 1]), 
+        Q14E = length(D4A[Q14E == 1]), Q14F = length(D4A[Q14F == 1]), 
+        Q14G = length(D4A[Q14G == 1]), Q14H = length(D4A[Q14H == 1]), 
+        Q14I = length(D4A[Q14I == 1]), Q14J = length(D4A[Q14J == 1]), 
+        Q14K = length(D4A[Q14K == 1]), Q14L = length(D4A[Q14L == 1]), 
+        Q14M = length(D4A[Q14M == 1]), Q14N = length(D4A[Q14N == 1]), 
+        Q14O = length(D4A[Q14O == 1]), Q14P = length(D4A[Q14P == 1]))
+
+df2 <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q14A = length(D4A[Q14A == 2]), Q14B = length(D4A[Q14B == 2]), 
+        Q14C = length(D4A[Q14C == 2]), Q14D = length(D4A[Q14D == 2]), 
+        Q14E = length(D4A[Q14E == 2]), Q14F = length(D4A[Q14F == 2]), 
+        Q14G = length(D4A[Q14G == 2]), Q14H = length(D4A[Q14H == 2]), 
+        Q14I = length(D4A[Q14I == 2]), Q14J = length(D4A[Q14J == 2]), 
+        Q14K = length(D4A[Q14K == 2]), Q14L = length(D4A[Q14L == 2]), 
+        Q14M = length(D4A[Q14M == 2]), Q14N = length(D4A[Q14N == 2]), 
+        Q14O = length(D4A[Q14O == 2]), Q14P = length(D4A[Q14P == 2]))
+detach("package:plyr", unload = TRUE)
+```
+
+
+
+```{r Q14 data prep-2}
+# D4A = df1["D4A"]
+Q14_count <- bind_rows(df1, df2) %>% 
+  group_by(D4A) %>% 
+  summarise_all(sum) %>% 
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry)) %>% 
+  ungroup()
+
+Q14_count <- inner_join(labels,Q14_count, by="Industry")
+
+Q14_sum <-  Q14_count %>%
+  select(Q14A:Q14P) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q14_sum <- tibble::rownames_to_column(Q14_sum,"Variable")
+Q14_sum <- inner_join(variable_info,Q14_sum, by="Variable")
+
+Q14_sum[,2] = c("Company website", "Indeed","LinkedIn","Social Media","Word of mouth")
+```
+
+
+
+```{r Q14 plot}
+#Q13_sum$Tools <- factor(Q13_sum$Tools,levels = c("Top 5", "Bottom 5"))
+
+ggplotly(
+  Q14_sum %>% 
+ggplot(aes(x= reorder(Question,-count),
+           y=count,
+           text=paste(
+             "<br><b> &#8226; Tool: </b>",Question,
+             "<br><b> &#8226; Count: </b>",count,
+             "<br><b> &#8226; Percent: </b>",Percentage), 
+           group=1)) +
+  geom_bar( stat = "identity",color="#2c7fb8",fill="#7fcdbb") +
+  labs(fill = "") +
+  ggtitle("Top 5 Successful Recruiting Tools that the Company Use Actively") +
+  xlab("Recruiting Tools") +
+  ylab("Response of the Business (Count)") +
+  theme(axis.text.x = element_text(size = 8)) +
+  #guides(fill=guide_legend(title="Tools")) +
+  theme_classic(),tooltip = c("text")
+  #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+)
+
+library(ggplot2)
+ggplot(Q14_sum,aes(x= "",y=count, fill=Question)) +
+  geom_bar(width = 1, stat = "identity", color="white", alpha=0.8) +
+  coord_polar("y",start = 0) +
+  ggtitle("Top-5 Services Recommended for Delaware JobLink") +
+  geom_text(aes(label = labels),position = position_stack(vjust = 0.5), size=4.2, color = "white") +
+  theme_void() + 
+  scale_fill_brewer(palette="Set1")+
+  guides(fill=guide_legend(title="Services"))
+```
+
+
+
+
+## Which services could the Delaware JobLink provide that would help your business?
+```{r Q16 Within Job Link, what are the top five tools cited - organize the data}
+# Which services could the Delaware JobLink (Delaware JobLink provides job seekers, 
+# employers, and training providers with easy-to-use tools that support a wide 
+# range of activities) provide that would help your business (select all that apply)?
+
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q16_1 = length(D4A[Q16_1 == 1]), Q16_2 = length(D4A[Q16_2 == 1]), 
+        Q16_3 = length(D4A[Q16_3 == 1]), Q16_4 = length(D4A[Q16_4 == 1]), 
+        Q16_5 = length(D4A[Q16_5 == 1]), Q16_6 = length(D4A[Q16_6 == 1]), 
+        Q16_7 = length(D4A[Q16_7 == 1]), Q16_8 = length(D4A[Q16_8 == 1]), 
+        Q16_9 = length(D4A[Q16_9 == 1]), Q16_10 = length(D4A[Q16_10 == 1]), 
+        Q16_11 = length(D4A[Q16_11 == 1]), Q16_12 = length(D4A[Q16_12 == 1]), 
+        Q16_13 = length(D4A[Q16_13 == 1]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+Q16_count <- df %>%
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry))
+
+Q16_count <- inner_join(labels,Q16_count, by="Industry")
+# Q16_sum <- data.frame(as.list(mapply(sum,Q16_count[,c(-1,-2,-3)])))
+
+Q16_sum <-  Q16_count %>%
+  select(Q16_1:Q16_13) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q16_sum <- tibble::rownames_to_column(Q16_sum,"Variable")
+Q16_sum <- inner_join(variable_info,Q16_sum, by="Variable")
+
+```
+
+
+
+```{r Q16, fig.width=9}
+# ggplotly(
+#   Q16_sum %>% 
+# ggplot(aes(x= reorder(Question,-count),
+#           y=count,
+#         text=paste(
+#           "<br><b> &#8226; Tool: </b>",Question,
+#          "<br><b>&#8226; Count: </b>",count,
+#          "<br><b> &#8226; Percent: </b>",Percentage
+#        ), group=1)) +
+#   #theme(axis.text.x = element_text(angle = 90)) +
+#   geom_bar( stat = "identity", position = "stack",color="blue",fill="steelblue") +
+#   ggtitle("Which services could the Delaware JobLink provide that would help your business? - Top-5") +
+#   xlab("Top-5 Services Recommended for Delaware JobLink") +
+#   ylab("Response of the Business (Count)") +
+#   theme(axis.text.x = element_text(angle = 90)) +
+#   #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+#   #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+#   theme_bw(),tooltip = c("text") 
+# )
+
+ggplot(Q16_sum,aes(x= "",y=count, fill=Question)) +
+  geom_bar(width = 1, stat = "identity", color="white", alpha=0.8) +
+  coord_polar("y",start = 0) +
+  ggtitle("Top-5 Services Recommended for Delaware JobLink") +
+  geom_text(aes(label = labels),position = position_stack(vjust = 0.5), size=4.2, color = "white") +
+  theme_void() + 
+  scale_fill_brewer(palette="Set1")+
+  guides(fill=guide_legend(title="Services"))
+```
+
+
+
+
+```{r Q17 Distribution of the Answers: Level1:Very Important and Level2: Somewhat Important)}
+target_industries <- c("Financial & Business Services","Healthcare","Education",
+              "Manufacturing, Logistics and Transportation","Food & Agriculture",
+              "Science & Technology","Construction & Mechanical Trades ")
+# [D4A==c(1,3,4,7,10,12,15,16,18)]
+Q17_labels <- paste("Q17",LETTERS[1:13],sep="")
+Q17_tr_label <- data.frame("Q17_list" = c(1:13),"Variable" = Q17_labels,"training"=c("Q17A High schools",
+"Q17B Career and Technical Education programs",
+"Q17C Libraries",
+"Q17D Delaware 2-year public colleges",
+"Q17E Delaware 4-year public colleges",
+"Q17F Delaware 4-year Private colleges",
+"Q17G Out of state 2-year public colleges",
+"Q17H Out of state 4-year public colleges",
+"Q17I Out of state 4-year Private colleges",
+"Q17J Labor unions",
+"Q17K Local workforce development board(s)",
+"Q17L Non-profit/private training providers",
+"Q17M Apprenticeships"))
+
+#industries with answer level1
+library(plyr)
+df1 <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q17A = length(D4A[Q17A == 1]), Q17B = length(D4A[Q17B == 1]), 
+        Q17C = length(D4A[Q17C == 1]), Q17D = length(D4A[Q17D == 1]), 
+        Q17E = length(D4A[Q17E == 1]), Q17F = length(D4A[Q17F == 1]), 
+        Q17G = length(D4A[Q17G == 1]), Q17H = length(D4A[Q17H == 1]), 
+        Q17I = length(D4A[Q17I == 1]), Q17J = length(D4A[Q17J == 1]), 
+        Q17K = length(D4A[Q17K == 1]), Q17L = length(D4A[Q17L == 1]), 
+        Q17M = length(D4A[Q17M == 1]))
+#industries with answer level2
+df2 <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q17A = length(D4A[Q17A == 2]), Q17B = length(D4A[Q17B == 2]), 
+        Q17C = length(D4A[Q17C == 2]), Q17D = length(D4A[Q17D == 2]), 
+        Q17E = length(D4A[Q17E == 2]), Q17F = length(D4A[Q17F == 2]), 
+        Q17G = length(D4A[Q17G == 2]), Q17H = length(D4A[Q17H == 2]),
+        Q17I = length(D4A[Q17H == 2]), Q17J = length(D4A[Q17J == 2]), 
+        Q17K = length(D4A[Q17K == 2]), Q17L = length(D4A[Q17L == 2]), 
+        Q17M = length(D4A[Q17M == 2]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+#remove non target industries
+# df2 <- df2 %>% slice(-c(4,5,7,8,10,12,13,16,18,19)) %>%
+#   rename(Industry=D4A) %>%
+#   mutate(Industry=as.factor(Industry))
+# df2 <- inner_join(labels,df2, by="Industry")
+# 
+# #remove non target industries
+# df_1 <- df1[df1$D4A %in% c("1","3","4","7","9","10","12","13","15","16","18"),] %>% 
+#   rename(Industry=D4A) %>% 
+#   mutate(Industry=as.factor(Industry))
+# df_1 <- inner_join(labels,df_1, by="Industry")
+```
+
+```{r Q17 Get the count per industry, message=FALSE}
+# library(tidyverse)
+library(ggplot2)
+# Q17_count <- read_csv("Q17_count2.csv")
+# Q17_info <- variable_info$Question[127:139]
+# Q17_count <- Q17_count %>% add_column(Q17_value=Q17_info, .after="Question")
+# write.csv(Q17_count,"/Users/yuksel/OneDrive/Documents/Tech_Impact/DWDB_BI/Q17_count2.csv")
+
+Q17_count_all_ind <- bind_rows(df1, df2) %>% 
+  group_by(D4A) %>% 
+  summarise_all(sum) %>% 
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry)) %>% 
+  ungroup()
+
+# extract the growth industries
+Q17_count_growth_ind  <- Q17_count_all_ind[Q17_count_all_ind$Industry %in%  
+                          c("1","3","4","7","9","10","12","13","15","16","18"),]
+Q17_count_growth_ind <- Q17_count_growth_ind %>% select(-Industry) # remove the first column
+Q17_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q17_count_growth_ind)
+  
+Q17_count_growth_ind <- aggregate(. ~ Industry, Q17_count_growth_ind, sum)
+Q17_count_growth_ind <- inner_join(growth_industries, Q17_count_growth_ind, by = "Industry")
+
+Q17_sum <-  Q17_count_all_ind %>%
+  select(Q17A:Q17M) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+
+Q17_sum <- tibble::rownames_to_column(Q17_sum,"Variable")
+Q17_sum <- inner_join(Q17_tr_label,Q17_sum, by="Variable")
+
+
+Q17_count_growth_ind <- Q17_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Q17A:Q17M, names_to = "Variable") %>% 
+  mutate(Variable=as.factor(Variable)) %>% 
+  inner_join(Q17_tr_label,Q17_count_growth_ind, by = "Variable")
+
+```
+
+```{r Q17 line plot, include=FALSE}
+# ggplot(data = Q17_count, aes(x=Q17_value, y=Total_Count, group=1)) +
+#   geom_line() + geom_point() +
+#   theme(axis.text.x = element_text(angle = 90)) +
+#   theme_bw() +
+#   ggtitle("Distribution of Very and Somewhat Important Responses by Industry") +
+#   xlab("Applicant’s Education Level (Training)") +
+#   ylab("Very/Somewhat Important Responses (Count)") +
+#   theme(axis.text.x = element_text(angle = 90)) +
+#   theme(plot.title = element_text(size = 12, face = "bold")) +
+#   theme(axis.title.y = element_text(size = 8)) +
+#   theme(axis.text.x = element_text(size = 8))
+  
+ggplot(data = Q17_sum, aes(x=training, y=Count, group=1)) +
+  geom_line() + geom_point() +
+  theme(axis.text.x = element_text(angle = 90)) 
+```
+
+```{r Q17-a,fig1, fig.height = 5, fig.width = 7}
+ggplotly( 
+Q17_sum %>% 
+ggplot( aes(x=training, y=Count)) +
+  geom_bar(stat="identity",color="blue",fill="steelblue")+
+  theme_bw() +
+  ggtitle("Distribution of Very and Somewhat Important Responses by Bussiness") +
+  xlab("Applicant’s Education Level (Training)") +
+  ylab("Very/Somewhat Important Responses (Count)") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  scale_x_discrete(labels= Q17_tr_label$training))
+```
+
+```{r Q17-b, fig2, fig.height = 5, fig.width = 8}
+ggplotly( 
+  Q17_count_growth_ind %>% 
+    ggplot(aes(x=Variable, 
+               y=value,
+               fill=names,
+               text = paste(
+                 "<b>&#8226; Industry: </b>",names,
+                 "<br><b>&#8226; Training: </b>",training,
+                 "<br><b>&#8226; Count: </b>",value
+               ))) +
+    geom_bar(stat = "identity") +
+    theme_classic() +
+    ggtitle("Distribution of Very and Somewhat Important Responses by Industry") +
+    xlab("Applicant’s Education Level (Training)") +
+    ylab("Very/Somewhat Important Responses (Count)") +
+    guides(fill=guide_legend(title="Growth Industries")) +
+    scale_fill_brewer(palette="Set2") +
+    #theme(axis.text.x = element_text(angle  = 45)) +
+    theme(plot.title = element_text(size = 11, face = "bold")) +
+    theme(axis.title.y = element_text(size = 11)) +
+    theme(axis.text.x = element_text(size = 8)) +
+    theme(plot.title = element_text(hjust = 0.5)) ,tooltip = c("text")
+)
+    
+```
+
+
+
+```{r Q18 what training offered? PCA analysis}
+
+```
+
+
+
+```{r Q20 PCA analysis}
+# data <- BDM_Final_Clean[25:34]
+# pca_res <- prcomp(data, scale. = TRUE)
+# autoplot(pca_res,data = BDM_Final_Clean, colour="D4A")
+# summary(pca_res)
+```
+
+
+
+### Which of the following non-technical skills do you find commonly lacking among job applicants or new employees?
+```{r Q21}
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q21_1 = length(D4A[Q21_1 == 1]), Q21_2 = length(D4A[Q21_2 == 1]), 
+        Q21_3 = length(D4A[Q21_3 == 1]), Q21_4 = length(D4A[Q21_4 == 1]), 
+        Q21_5 = length(D4A[Q21_5 == 1]), Q21_6 = length(D4A[Q21_6 == 1]), 
+        Q21_7 = length(D4A[Q21_7 == 1]), Q21_8 = length(D4A[Q21_8 == 1]), 
+        Q21_9 = length(D4A[Q21_9 == 1]), Q21_10 = length(D4A[Q21_10 == 1]), 
+        Q21_11 = length(D4A[Q21_11 == 1]), Q21_12 = length(D4A[Q21_12 == 1]), 
+        Q21_13 = length(D4A[Q21_13 == 1]), Q21_14 = length(D4A[Q21_14 == 1]), 
+        Q21_15 = length(D4A[Q21_15 == 1]), Q21_16 = length(D4A[Q21_16 == 1]), 
+        Q21_17 = length(D4A[Q21_17 == 1]), Q21_18 = length(D4A[Q21_18 == 1]), 
+        Q21_19 = length(D4A[Q21_19 == 1]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+Q21_count <- df %>%
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry))
+
+Q21_count <- inner_join(labels,Q21_count, by="Industry")
+# Q21_sum <- data.frame(as.list(mapply(sum,Q21_count[,c(-1,-2,-3)])))
+
+Q21_sum <-  Q21_count %>%
+  select(Q21_1:Q21_19) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q21_sum <- tibble::rownames_to_column(Q21_sum,"Variable")
+Q21_sum <- inner_join(variable_info,Q21_sum, by="Variable")
+
+Q21_top5_all_ind <- Q21_count[, (names(Q21_count) %in% c("Industry","names",Q21_sum$Variable))]
+
+#Q21 top non-technical skill across all industries
+Q21_top5_all_ind <- Q21_top5_all_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Q21_1:Q21_13, names_to = "Variable") %>% 
+  mutate(Variable=as.factor(Variable)) %>% 
+  inner_join(variable_info,Q21_top5_all_ind, by = "Variable") %>% 
+  rename(Count=value) %>% 
+  group_by(Question) %>% 
+  mutate(Percent = round(100*Count/sum(Count),2)) %>% 
+  ungroup()
+
+
+plot_ly(
+  data = Q21_top5_all_ind,
+  x = ~Question,
+  y = ~Count,
+  color = ~names,
+  type = "bar",
+  text = ~names,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within Answer:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+```
+
+
+### Which of the following technical/digital skills do you find commonly lacking among job applicants or new employees? 
+```{r Q22}
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q22_1 = length(D4A[Q22_1 == 1]), Q22_2 = length(D4A[Q22_2 == 1]), 
+        Q22_3 = length(D4A[Q22_3 == 1]), Q22_4 = length(D4A[Q22_4 == 1]), 
+        Q22_5 = length(D4A[Q22_5 == 1]), Q22_6 = length(D4A[Q22_6 == 1]), 
+        Q22_7 = length(D4A[Q22_7 == 1]), Q22_8 = length(D4A[Q22_8 == 1]), 
+        Q22_9 = length(D4A[Q22_9 == 1]), Q22_10 = length(D4A[Q22_10 == 1]), 
+        Q22_11 = length(D4A[Q22_11 == 1]), Q22_12 = length(D4A[Q22_12 == 1]), 
+        Q22_13 = length(D4A[Q22_13 == 1]), Q22_14 = length(D4A[Q22_14 == 1]), 
+        Q22_15 = length(D4A[Q22_15 == 1]), Q22_16 = length(D4A[Q22_16 == 1]), 
+        Q22_17 = length(D4A[Q22_17 == 1]), Q22_18 = length(D4A[Q22_18 == 1]), 
+        Q22_19 = length(D4A[Q22_19 == 1]), Q22_20 = length(D4A[Q22_20 == 1]), 
+        Q22_21 = length(D4A[Q22_21 == 1]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+Q22_count <- df %>%
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry))
+
+Q22_count <- inner_join(labels,Q22_count, by="Industry")
+# Q22_sum <- data.frame(as.list(mapply(sum,Q22_count[,c(-1,-2,-3)])))
+
+Q22_sum <-  Q22_count %>%
+  select(Q22_1:Q22_21) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q22_sum <- tibble::rownames_to_column(Q22_sum,"Variable")
+Q22_sum <- inner_join(variable_info,Q22_sum, by="Variable")
+
+Q22_top5_all_ind <- Q22_count[, (names(Q22_count) %in% c("Industry","names",Q22_sum$Variable))]
+
+#Q22 top non-technical skill across all industries
+Q22_top5_all_ind <- Q22_top5_all_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Q22_1:Q22_21, names_to = "Variable") %>% 
+  mutate(Variable=as.factor(Variable)) %>% 
+  inner_join(variable_info,Q22_top5_all_ind, by = "Variable") %>% 
+  rename(Count=value) %>% 
+  group_by(Question) %>% 
+  mutate(Percent = round(100*Count/sum(Count),2)) %>% 
+  ungroup()
+
+
+plot_ly(
+  data = Q22_top5_all_ind,
+  x = ~Question,
+  y = ~Count,
+  color = ~names,
+  type = "bar",
+  text = ~names,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within Answer:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+```
+
+
+### Which of the following non-technical skills are most difficult to recruit for? 
+```{r Q23A data prepare}
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q23A_1 = length(D4A[Q23A_1 == 1]), Q23A_2 = length(D4A[Q23A_2 == 1]), 
+        Q23A_3 = length(D4A[Q23A_3 == 1]), Q23A_4 = length(D4A[Q23A_4 == 1]), 
+        Q23A_5 = length(D4A[Q23A_5 == 1]), Q23A_6 = length(D4A[Q23A_6 == 1]), 
+        Q23A_7 = length(D4A[Q23A_7 == 1]), Q23A_8 = length(D4A[Q23A_8 == 1]), 
+        Q23A_9 = length(D4A[Q23A_9 == 1]), Q23A_10 = length(D4A[Q23A_10 == 1]), 
+        Q23A_11 = length(D4A[Q23A_11 == 1]), Q23A_12 = length(D4A[Q23A_12 == 1]), 
+        Q23A_13 = length(D4A[Q23A_13 == 1]), Q23A_14 = length(D4A[Q23A_14 == 1]), 
+        Q23A_15 = length(D4A[Q23A_15 == 1]), Q23A_16 = length(D4A[Q23A_16 == 1]), 
+        Q23A_17 = length(D4A[Q23A_17 == 1]), Q23A_18 = length(D4A[Q23A_18 == 1]), 
+        Q23A_19 = length(D4A[Q23A_19 == 1]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+Q23A_count <- df %>%
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry))
+
+Q23A_count <- inner_join(labels,Q23A_count, by="Industry")
+# Q23A_sum <- data.frame(as.list(mapply(sum,Q23A_count[,c(-1,-2,-3)])))
+
+Q23A_sum <-  Q23A_count %>%
+  select(Q23A_1:Q23A_19) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q23A_sum <- tibble::rownames_to_column(Q23A_sum,"Variable")
+Q23A_sum <- inner_join(variable_info,Q23A_sum, by="Variable")
+
+Q23A_top5_all_ind <- Q23A_count[, (names(Q23A_count) %in% c("Industry","names",Q23A_sum$Variable))]
+
+#Q23A top non-technical skill across all industries
+Q23A_top5_all_ind <- Q23A_top5_all_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Q23A_1:Q23A_14, names_to = "Variable") %>% 
+  mutate(Variable=as.factor(Variable)) %>% 
+  inner_join(variable_info,Q23A_top5_all_ind, by = "Variable") %>% 
+  rename(Count=value) %>% 
+  group_by(Question) %>% 
+  mutate(Percent = round(100*Count/sum(Count),2)) %>% 
+  ungroup()
+
+
+plot_ly(
+  data = Q23A_top5_all_ind,
+  x = ~Question,
+  y = ~Count,
+  color = ~names,
+  type = "bar",
+  text = ~names,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within Answer:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+
+```
+
+
+
+### Which of the following technical/digital skills are most difficult to recruit for?  
+```{r Q23B}
+library(plyr)
+df <- ddply(BDM_Final_Clean,.(D4A), summarize,  
+        Q23B_1 = length(D4A[Q23B_1 == 1]), Q23B_2 = length(D4A[Q23B_2 == 1]), 
+        Q23B_3 = length(D4A[Q23B_3 == 1]), Q23B_4 = length(D4A[Q23B_4 == 1]), 
+        Q23B_5 = length(D4A[Q23B_5 == 1]), Q23B_6 = length(D4A[Q23B_6 == 1]), 
+        Q23B_7 = length(D4A[Q23B_7 == 1]), Q23B_8 = length(D4A[Q23B_8 == 1]), 
+        Q23B_9 = length(D4A[Q23B_9 == 1]), Q23B_10 = length(D4A[Q23B_10 == 1]), 
+        Q23B_11 = length(D4A[Q23B_11 == 1]), Q23B_12 = length(D4A[Q23B_12 == 1]), 
+        Q23B_13 = length(D4A[Q23B_13 == 1]), Q23B_14 = length(D4A[Q23B_14 == 1]), 
+        Q23B_15 = length(D4A[Q23B_15 == 1]), Q23B_16 = length(D4A[Q23B_16 == 1]), 
+        Q23B_17 = length(D4A[Q23B_17 == 1]), Q23B_18 = length(D4A[Q23B_18 == 1]), 
+        Q23B_19 = length(D4A[Q23B_19 == 1]), Q23B_20 = length(D4A[Q23B_20 == 1]), 
+        Q23B_21 = length(D4A[Q23B_21 == 1]))
+detach("package:plyr", unload = TRUE)
+# require(plyr); detach(package:plyr) # to avoid conflict with dplyr
+
+Q23B_count <- df %>%
+  rename(Industry=D4A) %>% 
+  mutate(Industry=as.factor(Industry))
+
+Q23B_count <- inner_join(labels,Q23B_count, by="Industry")
+# Q23B_sum <- data.frame(as.list(mapply(sum,Q23B_count[,c(-1,-2,-3)])))
+
+Q23B_sum <-  Q23B_count %>%
+  select(Q23B_1:Q23B_21) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(count = V1) %>% 
+  arrange(desc(count)) %>% 
+  mutate(Percentage = percent(round(count/sum(count),3))) %>% 
+  slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",count,")"))
+
+Q23B_sum <- tibble::rownames_to_column(Q23B_sum,"Variable")
+Q23B_sum <- inner_join(variable_info,Q23B_sum, by="Variable")
+
+Q23B_top5_all_ind <- Q23B_count[, (names(Q23B_count) %in% c("Industry","names",Q23B_sum$Variable))]
+
+#Q23B top non-technical skill across all industries
+Q23B_top5_all_ind <- Q23B_top5_all_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Q23B_4:Q23B_21, names_to = "Variable") %>% 
+  mutate(Variable=as.factor(Variable)) %>% 
+  inner_join(variable_info,Q23B_top5_all_ind, by = "Variable") %>% 
+  rename(Count=value) %>% 
+  group_by(Question) %>% 
+  mutate(Percent = round(100*Count/sum(Count),2)) %>% 
+  ungroup()
+
+
+plot_ly(
+  data = Q23B_top5_all_ind,
+  x = ~Question,
+  y = ~Count,
+  color = ~names,
+  type = "bar",
+  text = ~names,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within Answer:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+```
+
+
+```{r Q25 PCA analysis}
+# data <- BDM_Final_Clean[85:100]
+# pca_res <- prcomp(data, scale. = TRUE)
+# autoplot(pca_res,data = BDM_Final_Clean, colour="D4A")
+```
+
+
+
+```{r Q28 longitudinal analysis by indistry - data prepare 1}
+Q28_plot_data <- dplyr::count(BDM_Final_Clean,Q28C) %>% 
+  dplyr::rename(Count=n) %>% 
+  dplyr::mutate(total = sum(Count))
+
+data <- BDM_Final_Clean %>% select("D4A","Q28A","Q28B","Q28C")
+Q28_data <- subset(data, Q28C!= 8)
+Q28_data <- subset(Q28_data, Q28B!= 8)
+Q28_data <- subset(Q28_data, Q28A!= 8)
+
+line_data <- aggregate(Q28A~D4A, Q28_data,mean)
+line_data <- cbind(line_data,aggregate(Q28B~D4A, Q28_data,mean)[2])
+line_data <- cbind(line_data,aggregate(Q28C~D4A, Q28_data,mean)[2])
+
+store_line_data <- line_data %>% 
+  mutate(Industry = as.factor(D4A)) %>% 
+  dplyr::rename(`Current` = Q28A, `1 Year` = Q28B, `3 Years` = Q28C) %>% 
+  pivot_longer(Current:`3 Years`, names_to = "time") %>% 
+  mutate(time=as.factor(time)) %>% 
+  mutate(time = fct_relevel(time, c("Current","1 Year","3 Years")))
+
+merged <- inner_join(labels,store_line_data, by="Industry") %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+data <- data %>% 
+  dplyr::rename(Industry=D4A) %>%
+  mutate(Industry=as.factor(Industry)) %>% 
+  inner_join(labels,data, by="Industry") %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+# industries
+D4A_count <-  BDM_Final_Clean %>%
+  as.tibble() %>% 
+  count(D4A) %>% 
+  mutate(Industry=as.factor(D4A)) %>% 
+  inner_join(labels,D4A_count,by="Industry") %>% 
+  dplyr::rename(Count=n) %>% 
+  select(-D4A) %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+# industries after Q28 Not Sure = 8 removed
+D4A_count_clean <-  Q28_data %>%
+  as.tibble() %>% 
+    count(D4A) %>% 
+  mutate(Industry=as.factor(D4A)) %>% 
+  inner_join(labels,D4A_count_clean,by="Industry") %>% 
+  rename(Count=n) %>% 
+  select(-D4A) %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+```
+
+
+
+
+### How many positions you’re actively trying to fill?  - Averaged
+
+
+* The considirations:
+  + We need to look at the Company sizes across industries: based on averaged size per industry, we can make assumptions on growth. Because the number of employees the company will hire is highly correlated to the company size. 
+  + `Not Sure` is removed from the survey, which was 38% of the original data. 
+  + `Accommodation and Food Services` has a rapid growth rate; however, this category has the highest uncertainty when considering the `Not Sure` answer for future hiring. 
+  + Most of the `Accommodation and Food Services` businesses have the number of employees less than 50. It is interesting to see how rapidly the sector wants to grow over the next three years. 
+```{r Q28 line data, fig.width=9}
+library(gghighlight)
+ggplotly( 
+  merged %>% 
+  ggplot(aes(x=time, y=value, color=Industry, group=Industry)) + 
+  geom_point() +
+  geom_line() +
+  ggtitle("How many positions do you project having open in Delaware? - Averaged") +
+  xlab("Time Frame") +
+  ylab("Average Positions") +
+  #gghighlight(max(value) > 5.5) +
+  #scale_y_discrete(breaks=c("2","3","4","5","6"),labels=c( "2","3","4","5-9","10+")) +
+  theme_classic() 
+  )
+
+```
+
+
+```{r d4a before, include=FALSE}
+
+ggplotly( 
+D4A_count %>% 
+ggplot( aes(x=Industry, y=Count)) +
+  geom_bar(stat="identity",color="blue",fill="steelblue")+
+  theme_bw() +
+  ggtitle("Distribution Industries") +
+  xlab("Industries") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  geom_line(aes(y =Count), size = 1.5, color="red", group = 1))
+```
+
+
+```{r d4a after,include=FALSE}
+ggplotly( 
+D4A_count_clean %>% 
+ggplot( aes(x=Industry, y=Count)) +
+  geom_bar(stat="identity",color="blue",fill="steelblue")+
+  theme_bw() +
+  ggtitle("Distribution Industries - after Q28 Not Sure = 8 removed") +
+  xlab("Industries") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  geom_line(aes(y =Count), size = 1.5, color="red", group = 1)+
+  coord_flip()
+)
+
+```
+
+
+
+```{r Q28A bar graph, fig.width=8,fig.height=6, include=FALSE}
+### How many positions do you currently have open in Delaware that you're actively trying to fill?
+Position <- cut(data$Q28A, breaks = c(0, 1, 5, 6, 7,8), labels = c("None","1-4","5-9","10+","Not Sure"))
+
+ggplotly(
+  data %>% 
+  ggplot(aes(x=Industry,fill=Position)) + 
+  geom_bar() +
+  scale_fill_brewer(palette="Set1") + 
+  ggtitle("Positions Actively Trying to Fill - Currently") +
+  xlab("Industries") + 
+  ylab("Count") +
+  guides(fill = guide_legend(title = "Position to fill")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8))
+)
+```
+
+
+
+
+```{r Q28B bar graph, fig.width=8, fig.height=6,include=FALSE}
+### How many positions do you project having open in Delaware a year from now? 
+Position <- cut(data$Q28B, breaks = c(0, 1, 5, 6, 7,8), labels = c("None","1-4","5-9","10+","Not Sure"))
+
+ggplotly(
+  data %>% 
+  ggplot(aes(x=Industry,fill=Position)) + 
+  geom_bar() +
+  scale_fill_brewer(palette="Set1") + 
+  ggtitle("Positions Actively Trying to Fill - a Year from Now") +
+  xlab("Industries") + 
+  ylab("Count") +
+  guides(fill = guide_legend(title = "Position to fill")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8)) 
+)
+
+```
+
+
+
+
+```{r Q28C bar graph, fig.width=8, fig.height=6,include=FALSE}
+### How many positions do you project having open in Delaware three years from now?
+Position <- cut(data$Q28C, breaks = c(0, 1, 5, 6, 7,8), labels = c("None","1-4","5-9","10+","Not Sure"))
+
+ggplotly(
+  data %>% 
+  ggplot(aes(x=Industry,fill=Position)) +
+  geom_bar() +
+  scale_fill_brewer(palette="Set1") + 
+  ggtitle("Positions Actively Trying to Fill - Three Years from Now") +
+  xlab("Industries") + 
+  ylab("Count") +
+  guides(fill = guide_legend(title = "Position to fill")) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  #geom_text_repel(aes(label = Q17_count$Question, data = Q17_count,fontface ="plain", color = "black", size = 3)) +
+  theme(plot.title = element_text(size = 12, face = "bold")) +
+  theme(axis.title.y = element_text(size = 8)) +
+  theme(axis.text.x = element_text(size = 8)) 
+)
+```
+
+
+
+### Do you use Delaware JobLink?
+```{r Q30 look at distribution across industry- data prepare, fig.width=9}
+data <- BDM_Final_Clean %>% select("SAM_NO","D4A","Q30") %>% rename(Industry=D4A)
+
+
+# Q30 all industries ###########################################################
+Q30_count_all_ind <- data %>% count(Industry,Q30, name = "Count")
+
+# make it wide format
+Q30_count_all_ind <- Q30_count_all_ind %>% 
+  tidyr::spread(Q30,Count) %>%
+  rename(Yes="1", No="2", `Not Sure`="3") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(Industry = as.factor(Industry))
+#Q30_count_all_ind <- inner_join(labels,Q30_count_all_ind, by="Industry") 
+
+# Q30 sum ######################################################################
+Q30_sum <-  Q30_count_all_ind %>%
+  select(Yes:`Not Sure`) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+Q30_sum <- tibble::rownames_to_column(Q30_sum,"Variable")
+
+
+# Q30 Growth industries ########################################################
+# extract the growth industries
+Q30_count_growth_ind  <- Q30_count_all_ind[Q30_count_all_ind$Industry %in%  
+                                     c("1","3","4","7","9","10","12","13","15","16","18"),] 
+Q30_count_growth_ind <- Q30_count_growth_ind %>% select(-Industry) # remove the first column
+# group the growth industries
+Q30_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q30_count_growth_ind)
+
+# sum those industries in the same growth industry
+Q30_count_growth_ind <- aggregate(. ~Industry, Q30_count_growth_ind, sum)
+Q30_count_growth_ind <- inner_join(growth_industries, Q30_count_growth_ind, by = "Industry")
+# wide format to long format
+Q30_count_growth_ind <- Q30_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Yes:`Not Sure`, names_to = "Answer") %>% 
+  mutate(Answer=as.factor(Answer)) %>% 
+  rename(`Growth Industry`=names, Count=value)
+
+# get the percentage data within answer and industry as well as total answer within industry
+Q30_count_growth_ind <- Q30_count_growth_ind %>% 
+  group_by(`Growth Industry`) %>% 
+  mutate(Percent=round(Count/sum(Count),3), G_Total=sum(Count)) %>% 
+  ungroup() %>% 
+  group_by(Answer) %>% 
+  mutate(Ans=round(Count/sum(Count),3)) %>% 
+  ungroup()
+```
+
+
+
+```{r Q30 growth industries plot}
+Q30_count_growth_ind$Answer <- factor(Q30_count_growth_ind$Answer,levels = c("Yes", "No", "Not Sure"))
+
+ggplotly(
+  Q30_count_growth_ind %>%
+    mutate(Percent_yes = if_else(Answer=="Yes",Percent,NA_real_)) %>%
+    fill(Percent_yes) %>%
+    mutate(`Growth Industry`=fct_reorder(`Growth Industry`, Percent_yes)) %>% 
+    ggplot(aes(x= Percent,
+               y=`Growth Industry`,
+               fill=Answer,
+               text=paste(
+                 "<b>&#8226; Growth industry: </b>",`Growth Industry`,
+                 "<br><b> &#8226; Count: </b>",Count,
+                 "<br><b> &#8226; Response within industry %: </b>",Percent*100,
+                 "<br><b> &#8226; Response within answer %: </b>",Ans*100,
+                 "<br><b> &#x2022; Total within industry: </b>",G_Total),
+               group=`Growth Industry`
+    )) +
+    geom_col( position = "stack") +
+    scale_x_continuous(labels = scales::percent) +
+    scale_fill_brewer(palette = "Set2") + 
+    labs(title = "Percent of Delaware JobLink Use by Industry", 
+         x = "" , 
+         y = "") +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle  = 0,
+                                     size = 8),
+          plot.title = element_text(size = 11, 
+                                    face = "bold"),
+          axis.title.y = element_text(size = 11)),
+  tooltip = c("text")
+)
+# flip coordinate
+# 
+```
+
+
+### Do you have positions not requiring a college degree?
+
+```{r Q34 look at distribution across industry- data prepare, fig.width=9}
+data <- BDM_Final_Clean %>% select("SAM_NO","D4A","Q34") %>% rename(Industry=D4A)
+
+
+##############################################################################
+# Q34 all industries
+Q34_count_all_ind <- data %>% count(Industry,Q34, name = "Count")
+
+# make it wide format
+Q34_count_all_ind <- Q34_count_all_ind %>% 
+  tidyr::spread(Q34,Count) %>%
+  rename(Yes="1", No="2", `Not Sure`="3") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(Industry = as.factor(Industry))
+#Q34_count_all_ind <- inner_join(labels,Q34_count_all_ind, by="Industry") 
+
+##############################################################################
+# Q34 sum
+Q34_sum <-  Q34_count_all_ind %>%
+  select(Yes:`Not Sure`) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+Q34_sum <- tibble::rownames_to_column(Q34_sum,"Variable")
+
+
+##############################################################################
+# Q34 Growth industries
+# extract the growth industries
+Q34_count_growth_ind  <- Q34_count_all_ind[Q34_count_all_ind$Industry %in%  
+                                     c("1","3","4","7","9","10","12","13","15","16","18"),] 
+Q34_count_growth_ind <- Q34_count_growth_ind %>% select(-Industry) # remove the first column
+# group the growth industries
+Q34_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q34_count_growth_ind)
+
+# sum those industries in the same growth industry
+Q34_count_growth_ind <- aggregate(. ~Industry, Q34_count_growth_ind, sum)
+Q34_count_growth_ind <- inner_join(growth_industries, Q34_count_growth_ind, by = "Industry")
+# wide format to long format
+Q34_count_growth_ind <- Q34_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Yes:`Not Sure`, names_to = "Answer") %>% 
+  mutate(Answer=as.factor(Answer)) %>% 
+  rename(`Growth Industry`=names, Count=value)
+
+# get the percentage data within answer and industry as well as total answer within industry
+Q34_count_growth_ind <- Q34_count_growth_ind %>% 
+  group_by(`Growth Industry`) %>% 
+  mutate(Percent=round(Count/sum(Count),3), G_Total=sum(Count)) %>% 
+  ungroup() %>% 
+  group_by(Answer) %>% 
+  mutate(Ans=round(Count/sum(Count),3)) %>% 
+  ungroup()
+
+
+
+Q34_count_growth_ind$Answer <- factor(Q34_count_growth_ind$Answer,
+                                levels=c("Yes","No","Not Sure"))
+
+
+plot_ly(
+  data = Q34_count_growth_ind,
+  x = ~Answer,
+  y = ~Count,
+  color = ~`Growth Industry`,
+  type = "bar",
+  text = ~`Growth Industry`,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within company size:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack")
+
+
+```
+
+
+
+
+```{r Q35 look at distribution across industry,, fig.width=8, include=FALSE}
+### Do You Accept Individuals Coming out of the Criminal Justice System by Industry?
+library(dplyr)
+data <- BDM_Final_Clean %>% select("SAM_NO","D4A","Q35") %>% rename(Industry=D4A)
+
+
+##############################################################################
+# Q35 all industries
+Q35_count_all_ind <- data %>% count(Industry,Q35, name = "Count")
+
+# make it wide format
+Q35_count_all_ind <- Q35_count_all_ind %>% 
+  tidyr::spread(Q35,Count) %>%
+  rename(Yes="1", No="2", `Not Sure`="3") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(Industry = as.factor(Industry))
+#Q35_count_all_ind <- inner_join(labels,Q35_count_all_ind, by="Industry") 
+
+
+##############################################################################
+# Q35 sum
+Q35_sum <-  Q35_count_all_ind %>%
+  select(Yes:`Not Sure`) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+Q35_sum <- tibble::rownames_to_column(Q35_sum,"Variable")
+
+
+##############################################################################
+# Q35 Growth industries
+# extract the growth industries
+Q35_count_growth_ind  <- Q35_count_all_ind[Q35_count_all_ind$Industry %in%  
+                                     c("1","3","4","7","9","10","12","13","15","16","18"),] 
+Q35_count_growth_ind <- Q35_count_growth_ind %>% select(-Industry) # remove the first column
+# group the growth industries
+Q35_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q35_count_growth_ind)
+
+# sum those industries in the same growth industry
+Q35_count_growth_ind <- aggregate(. ~ Industry, Q35_count_growth_ind, sum)
+Q35_count_growth_ind <- inner_join(growth_industries, Q35_count_growth_ind, by = "Industry")
+# wide format to long format
+Q35_count_growth_ind <- Q35_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(Yes:`Not Sure`, names_to = "Answer") %>% 
+  mutate(Answer=as.factor(Answer)) %>% 
+  rename(`Growth Industry`=names, Count=value)
+
+# get the percentage data within answer and industry as well as total answer within industry
+Q35_count_growth_ind <- Q35_count_growth_ind %>% 
+  group_by(`Growth Industry`) %>% 
+  mutate(Percent=round(Count/sum(Count),3), G_Total=sum(Count)) %>% 
+  ungroup() %>% 
+  group_by(Answer) %>% 
+  mutate(Ans=round(Count/sum(Count),3)) %>% 
+  ungroup()
+```
+
+
+
+```{r Q35 plot}
+ggplotly(
+  Q35_count_growth_ind %>% 
+ggplot(aes(x=fct_relevel(Answer, "Yes"),
+          y=Count,
+        fill=`Growth Industry`,
+        text=paste(
+         "<b>&#8226; Growth Industry: </b>",`Growth Industry`,
+         "<br><b>&#8226; Count: </b>",Count,
+         "<br><b> &#8226; Within industry: </b>",Percent,
+         "<br><b> &#8226; Within answer: </b>",Ans,
+         "<br><b> &#x2022; Total within Industry: </b>",G_Total),
+        group=`Growth Industry`
+       )) +
+  geom_bar(stat = "identity") +
+  ggtitle("Do You Accept Individuals Coming out of the Criminal Justice System by Industry?") +
+  xlab("Response of the Business") +
+  ylab("Response of the Business (Count)") +
+    # #scale_fill_brewer(palette="Set1") +
+    # #scale_x_discrete(labels= q35_label) + 
+    # #theme(axis.text.x = element_text(angle  = 90)) +
+  theme(plot.title = element_text(size = 11, face = "bold")) +
+  theme(axis.title.y = element_text(size = 11)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  geom_text(aes(label=Count), position = position_stack(vjust = 0.5),size=2) +
+  theme_classic(),tooltip = c("text")
+)
+```
+
+
+```{r Q36 look at distribution across industry}
+###  How ready are new applicants in meeting the skills and qualifications for the job they are applying for?
+library(dplyr)
+data <- BDM_Final_Clean %>% select("SAM_NO","D4A","Q36") %>% rename(Industry=D4A)
+
+
+##############################################################################
+# Q36 all industries
+Q36_count_all_ind <- data %>% count(Industry,Q36, name = "Count")
+
+# make it wide format
+Q36_count_all_ind <- Q36_count_all_ind %>% 
+  tidyr::spread(Q36,Count) %>%
+  rename(`Very ready`="1", `Somewhat ready`="2", `Not very ready`="3", `Not at all ready`="4", `Not sure`="5") %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(Industry = as.factor(Industry))
+#Q36_count_all_ind <- inner_join(labels,Q36_count_all_ind, by="Industry") 
+
+
+##############################################################################
+# Q36 sum
+Q36_sum <-  Q36_count_all_ind %>%
+  select(`Very ready`:`Not sure`) %>% 
+  summarise_all(.,.funs = sum) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rename(Count = V1) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(Percentage = percent(round(Count/sum(Count),3))) %>% 
+  #slice(1:5)%>% 
+  mutate(labels = paste0(Percentage," (",Count,")"))
+Q36_sum <- tibble::rownames_to_column(Q36_sum,"Variable")
+
+
+##############################################################################
+# Q36 Growth industries
+# extract the growth industries
+Q36_count_growth_ind  <- Q36_count_all_ind[Q36_count_all_ind$Industry %in%  
+                                     c("1","3","4","7","9","10","12","13","15","16","18"),] 
+Q36_count_growth_ind <- Q36_count_growth_ind %>% select(-Industry) # remove the first column
+# group the growth industries
+Q36_count_growth_ind <- cbind("Industry"= c(1,3,4,4,10,10,12,10,15,16,1),Q36_count_growth_ind)
+
+# sum those industries in the same growth industry
+Q36_count_growth_ind <- aggregate(. ~ Industry, Q36_count_growth_ind, sum)
+Q36_count_growth_ind <- inner_join(growth_industries, Q36_count_growth_ind, by = "Industry")
+
+# wide format to long format
+Q36_count_growth_ind <- Q36_count_growth_ind %>% 
+  mutate(Industry = as.factor(Industry)) %>% 
+  pivot_longer(`Very ready`:`Not sure`, names_to = "Answer") %>% 
+  mutate(Answer=as.factor(Answer)) %>% 
+  rename(`Growth Industry`=names, Count=value)
+
+# get the percentage data within answer and industry as well as total answer within industry
+Q36_count_growth_ind <- Q36_count_growth_ind %>% 
+  group_by(`Growth Industry`) %>% 
+  mutate(Percent=round(Count/sum(Count),3), G_Total=sum(Count)) %>% 
+  ungroup() %>% 
+  group_by(Answer) %>% 
+  mutate(Ans=round(Count/sum(Count),3)) %>% 
+  ungroup()
+
+Q36_count_growth_ind$Answer <- factor(Q36_count_growth_ind$Answer,
+                             levels=c("Very ready", "Somewhat ready", "Not very ready", "Not at all ready", "Not sure"))
+```
+
+
+
+```{r Q36 ggplotly}
+ggplotly(
+  Q36_count_growth_ind %>% 
+ggplot(aes(x=fct_relevel(Answer, "Yes"),
+          y=Count,
+        fill=`Growth Industry`,
+        text=paste(
+         "<b>&#8226; Growth Industry: </b>",`Growth Industry`,
+         "<br><b>&#8226; Count: </b>",Count,
+         "<br><b> &#8226; Within industry: </b>",Percent,
+         "<br><b> &#8226; Within answer: </b>",Ans,
+         "<br><b> &#x2022; Total within Industry: </b>",G_Total),
+        group=`Growth Industry`
+       )) +
+  geom_bar(stat = "identity") +
+  ggtitle("How ready are new applicants?") +
+  xlab("Response of the Business") +
+  ylab("Response of the Business (Count)") +
+    # #scale_fill_brewer(palette="Set1") +
+    # #theme(axis.text.x = element_text(angle  = 90)) +
+  theme(plot.title = element_text(size = 11, face = "bold")) +
+  theme(axis.title.y = element_text(size = 11)) +
+  theme(axis.text.x = element_text(size = 8)) +
+  #geom_text(aes(label=Count), position = position_stack(vjust = 0.5),size=2) +
+  theme_classic(),tooltip = c("text")
+)
+```
+
+
+
+```{r Q36 plotly}
+
+plot_ly(
+  data = Q36_count_growth_ind,
+  x = ~Answer,
+  y = ~Count,
+  color = ~`Growth Industry`,
+  type = "bar",
+  text = ~`Growth Industry`,
+  hovertemplate = ~paste(
+    '</br> <b>Industry:</b> %{text}',
+    '</br> <b>Count:</b>',Count,
+    '</br> <b>Within company:</b>',Percent
+  )
+) %>% 
+  layout(barmode = "stack",
+         title = list(text = '<b> How ready are new applicants? </b>'),
+         xaxis = list(title = list(text='<b> Responses</b>'), tickangle = 330),
+         yaxis = list(title = list(text='<b> Count </b>')),
+         legend = list(title = list(text = '<b> Growth Industries </b>'))
+         )
+
+```
+
+## How many mission critical positions will be lost due to retirement {.tabset}
+
+
+### How many mission critical positions will be lost due to retirement in the next year (Q37) and next five years (Q38)?
+```{r Q37-38 use Q37 to correlate Q38}
+data <- BDM_Final_Clean %>% select("D4A","Q37","Q38")
+Q37_38_data <- subset(data, Q37!= 8)
+Q37_38_data <- subset(Q37_38_data, Q38!= 8)
+
+line_data <- aggregate(Q37~D4A, Q37_38_data,mean)
+line_data <- cbind(line_data,aggregate(Q38~D4A, Q37_38_data,mean)[2])
+
+store_line_data <- line_data %>% 
+  mutate(Industry = as.factor(D4A)) %>% 
+  dplyr::rename(`Next year` = Q37, `Next five years` = Q38) %>% 
+  pivot_longer(`Next year`:`Next five years`, names_to = "Time") %>% 
+  mutate(Time=as.factor(Time)) %>% 
+  mutate(Time = fct_relevel(Time, c("Next year","Next five years")))
+
+merged <- inner_join(labels,store_line_data, by="Industry") %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+# industries
+D4A_count <-  data %>%
+  as.tibble() %>% 
+  count(D4A) %>% 
+  mutate(Industry=as.factor(D4A)) %>% 
+  inner_join(labels,D4A_count,by="Industry") %>% 
+  dplyr::rename(Count=n) %>% 
+  select(-D4A) %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+# industries after Q28 Not Sure = 8 removed
+D4A_count_clean <-  Q37_38_data %>%
+  as.tibble() %>% 
+    count(D4A) %>% 
+  mutate(Industry=as.factor(D4A)) %>% 
+  inner_join(labels,D4A_count_clean,by="Industry") %>% 
+  rename(Count=n) %>% 
+  select(-D4A) %>% 
+  dplyr::rename(industry=Industry, Industry=names)
+
+
+ggplotly( 
+  merged %>% 
+  ggplot(aes(x=Time, y=value, color=Industry, group=Industry)) + 
+  geom_point() +
+  geom_line() +
+  ggtitle("How many mission critical positions will be lost due to retirement - Averaged") +
+  xlab("Time Frame") +
+  ylab("Average Positions") +
+  #gghighlight(max(value) > 5.5) +
+  #scale_y_discrete(breaks=c("2","3","4","5","6"),labels=c( "2","3","4","5-9","10+")) +
+  theme_classic() 
+  )
+
+fig <- plot_ly(
+  data = merged,
+  x = ~Time,
+  y = ~value,
+  color = ~Industry,
+  type = "scatter",
+  mode = "lines+markers",
+  text = ~Industry,
+  hovertemplate = ~paste(
+    '</br><b> %{text}</b><br>',
+    '</br> <b>Count:</b>',value
+    )
+  ) 
+fig <- fig %>% 
+  layout(title = list(text = '<b> How many mission critical positions will be lost due to retirement? - Averaged </b>'),
+         xaxis = list(title = list(text='<b> Responses</b>'), tickangle = 0,tickmode = "linear",range=c(-0.1,1.1)),
+         #yaxis = list(range=c(0,6)),
+         yaxis = list(tickvals = c(1,2,3,4,5,6),ticktext = c("1","2","3","4","5-9","10+")),
+         yaxis = list(title = list(text='<b> Number of Positions </b>')),
+         legend = list(title = list(text = '<b> Growth Industries </b>'))
+         ) 
+
+fig
+
+```
+
+
+
+
+
+
+
+
